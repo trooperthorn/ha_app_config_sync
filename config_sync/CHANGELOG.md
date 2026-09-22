@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.09.22.2
+
+First live run showed the first-run check treating an authentication
+failure as "remote branch does not exist" and making a root commit
+anyway. Now a fetch failure other than a missing branch stops the cycle
+with the error (nothing is committed until the remote is readable), and
+a merge between two histories with no common commit proceeds under the
+conflict policy instead of failing. Smoke test covers both.
+
 ## 2026.09.22.1
 
 First release. Two-way git synchronization of the configuration directory

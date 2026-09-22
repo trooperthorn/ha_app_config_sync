@@ -135,4 +135,53 @@ echo "== 8. no .git in the configuration directory"
 [ -d "${DATA}/repo.git" ] || fail "the git directory is not under /data"
 ok "git directory placement"
 
+echo "== 9. first run against a remote that already has history"
+HOST2="${WORK}/host2"; DATA2="${WORK}/data2"; REMOTE2="${WORK}/remote2.git"; CLONE2="${WORK}/clone2"
+mkdir -p "${HOST2}" "${DATA2}"
+cp "${DATA}/exclude" "${DATA2}/exclude"
+git init -q --bare -b main "${REMOTE2}"
+git clone -q "${REMOTE2}" "${CLONE2}" 2>/dev/null
+git -C "${CLONE2}" config user.name tester; git -C "${CLONE2}" config user.email tester@example.invalid
+printf '# created in forgejo
+' > "${CLONE2}/README.md"
+git -C "${CLONE2}" add -A && git -C "${CLONE2}" commit -q -m "initial" && git -C "${CLONE2}" push -q origin main
+printf 'homeassistant:
+  name: Second
+' > "${HOST2}/configuration.yaml"
+docker run --rm --user "$(id -u):$(id -g)"     -v "${HOST2}:/homeassistant" -v "${DATA2}:/data" -v "${ADDON_CONFIG}:/addon_config" -v "${REMOTE2}:/remote.git"     -e SYNC_REMOTE_URL=/remote.git -e SYNC_BRANCH=main -e SYNC_LOG_LEVEL=debug -e SYNC_EXCLUDE_FILE=/data/exclude     --entrypoint /usr/local/bin/config_sync.sh "${IMAGE}" once 2>&1 | tee "${WORK}/step9.log" | sed 's/^/    /'
+grep -q "adopting the history" "${WORK}/step9.log" || fail "existing remote history was not adopted"
+git -C "${CLONE2}" pull -q origin main
+grep -q 'name: Second' "${HOST2}/configuration.yaml" || fail "the host file was overwritten by the import"
+[ -f "${CLONE2}/configuration.yaml" ] || fail "host file was not pushed on top of the remote history"
+[ ! -e "${CLONE2}/README.md" ] || fail "a remote-only path survived the host's import commit"
+[ "$(git -C "${CLONE2}" rev-list --count main)" -ge 2 ] || fail "remote history was replaced instead of extended"
+ok "existing remote history adopted, host wins"
+
+echo "== 10. two unrelated histories merge under the conflict policy"
+# A root commit made locally before the remote was readable, then the
+# remote turns out to have its own root commit.
+HOST3="${WORK}/host3"; DATA3="${WORK}/data3"; REMOTE3="${WORK}/remote3.git"; CLONE3="${WORK}/clone3"; EMPTY3="${WORK}/empty3.git"
+mkdir -p "${HOST3}" "${DATA3}"; cp "${DATA}/exclude" "${DATA3}/exclude"
+git init -q --bare -b main "${EMPTY3}"
+printf 'homeassistant:
+  name: Third
+' > "${HOST3}/configuration.yaml"
+docker run --rm --user "$(id -u):$(id -g)"     -v "${HOST3}:/homeassistant" -v "${DATA3}:/data" -v "${ADDON_CONFIG}:/addon_config" -v "${EMPTY3}:/remote.git"     -e SYNC_REMOTE_URL=/remote.git -e SYNC_BRANCH=main -e SYNC_EXCLUDE_FILE=/data/exclude     --entrypoint /usr/local/bin/config_sync.sh "${IMAGE}" once >/dev/null
+git init -q --bare -b main "${REMOTE3}"
+git clone -q "${REMOTE3}" "${CLONE3}" 2>/dev/null
+git -C "${CLONE3}" config user.name tester; git -C "${CLONE3}" config user.email tester@example.invalid
+printf 'homeassistant:
+  name: RepoRoot
+' > "${CLONE3}/configuration.yaml"
+printf 'x
+' > "${CLONE3}/extra.yaml"
+git -C "${CLONE3}" add -A && git -C "${CLONE3}" commit -q -m "other root" && git -C "${CLONE3}" push -q origin main
+docker run --rm --user "$(id -u):$(id -g)"     -v "${HOST3}:/homeassistant" -v "${DATA3}:/data" -v "${ADDON_CONFIG}:/addon_config" -v "${REMOTE3}:/remote.git"     -e SYNC_REMOTE_URL=/remote.git -e SYNC_BRANCH=main -e SYNC_CONFLICT_WINNER=host -e SYNC_EXCLUDE_FILE=/data/exclude     --entrypoint /usr/local/bin/config_sync.sh "${IMAGE}" once 2>&1 | tee "${WORK}/step10.log" | sed 's/^/    /'
+grep -q "shares no history" "${WORK}/step10.log" || fail "unrelated histories were not detected"
+grep -q 'name: Third' "${HOST3}/configuration.yaml" || fail "host did not win the unrelated-history conflict"
+[ -f "${HOST3}/extra.yaml" ] || fail "remote-only file from the unrelated history was not written"
+git -C "${CLONE3}" pull -q origin main
+grep -q 'name: Third' "${CLONE3}/configuration.yaml" || fail "unrelated-history merge was not pushed"
+ok "unrelated histories"
+
 echo "== all smoke checks passed"
