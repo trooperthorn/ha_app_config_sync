@@ -43,8 +43,7 @@ APP_VERSION="${SYNC_APP_VERSION:-dev}"
 
 # ---------------------------------------------------------------- logging
 _ts() { date -u '+%Y-%m-%d %H:%M:%S'; }
-log_debug()   { if [ "${LOG_LEVEL}" = "debug" ]; then printf '[%s] DEBUG: %s
-' "$(_ts)" "$1"; fi; }
+log_debug()   { if [ "${LOG_LEVEL}" = "debug" ]; then printf '[%s] DEBUG: %s\n' "$(_ts)" "$1"; fi; }
 log_info()    { case "${LOG_LEVEL}" in warning|error) ;; *) printf '[%s] INFO: %s\n' "$(_ts)" "$1" ;; esac; }
 log_warning() { [ "${LOG_LEVEL}" = "error" ] || printf '[%s] WARNING: %s\n' "$(_ts)" "$1" >&2; }
 log_error()   { printf '[%s] ERROR: %s\n' "$(_ts)" "$1" >&2; }
