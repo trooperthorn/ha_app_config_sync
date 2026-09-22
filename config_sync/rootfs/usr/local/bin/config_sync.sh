@@ -43,7 +43,8 @@ APP_VERSION="${SYNC_APP_VERSION:-dev}"
 
 # ---------------------------------------------------------------- logging
 _ts() { date -u '+%Y-%m-%d %H:%M:%S'; }
-log_debug()   { [ "${LOG_LEVEL}" = "debug" ] && printf '[%s] DEBUG: %s\n' "$(_ts)" "$1" || true; }
+log_debug()   { if [ "${LOG_LEVEL}" = "debug" ]; then printf '[%s] DEBUG: %s
+' "$(_ts)" "$1"; fi; }
 log_info()    { case "${LOG_LEVEL}" in warning|error) ;; *) printf '[%s] INFO: %s\n' "$(_ts)" "$1" ;; esac; }
 log_warning() { [ "${LOG_LEVEL}" = "error" ] || printf '[%s] WARNING: %s\n' "$(_ts)" "$1" >&2; }
 log_error()   { printf '[%s] ERROR: %s\n' "$(_ts)" "$1" >&2; }
@@ -309,7 +310,7 @@ merge_remote() {
     local before; before="$(g rev-parse HEAD)"
     if g merge -q --no-edit -X "${strategy}" -m "sync: merge origin/${BRANCH} (${CONFLICT_WINNER} wins conflicts)" "${remote}" 2>"${DATA_DIR}/merge.err"; then
         PULLED_FILES="$(g diff --name-only "${before}" HEAD | wc -l | tr -d ' ')"
-        log_info "Merged origin/${BRANCH}: ${PULLED_FILES} file(s) written to the host."
+        if [ "${LOG_LEVEL}" = "debug" ]; then g diff --name-status "${before}" HEAD | sed 's/^/  /'; fi
         [ "${LOG_LEVEL}" = "debug" ] && g diff --name-status "${before}" HEAD | sed 's/^/  /' || true
     else
         # -X resolves content conflicts; what is left is a tree-level
