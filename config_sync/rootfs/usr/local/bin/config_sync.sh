@@ -226,13 +226,20 @@ adopt_remote_if_first_run() {
     if g rev-parse --verify --quiet "refs/heads/${BRANCH}" >/dev/null; then
         return 0
     fi
-    if g fetch --quiet origin "${BRANCH}" 2>/dev/null; then
+    if g fetch --quiet origin "${BRANCH}" 2>"${DATA_DIR}/fetch.err"; then
         log_info "First run: adopting the history of origin/${BRANCH}; the host's files become the next commit."
         g update-ref "refs/heads/${BRANCH}" "refs/remotes/origin/${BRANCH}"
         # Index at the remote, work tree untouched.
         g reset -q --mixed "refs/heads/${BRANCH}" -- . 2>/dev/null || g reset -q --mixed "refs/heads/${BRANCH}"
-    else
+    elif grep -q "couldn't find remote ref" "${DATA_DIR}/fetch.err"; then
         log_info "First run: origin/${BRANCH} does not exist yet; the host's files become the first commit."
+    else
+        # Authentication or connectivity, not an empty remote. Committing a
+        # root commit now would leave two unrelated histories to reconcile
+        # once the remote is reachable, so stop this cycle instead.
+        LAST_ERROR="first run: could not read origin/${BRANCH}: $(tr '\n' ' ' < "${DATA_DIR}/fetch.err")"
+        log_error "${LAST_ERROR}"
+        return 1
     fi
 }
 
@@ -307,7 +314,15 @@ merge_remote() {
         *) strategy="theirs" ;;
     esac
     local before; before="$(g rev-parse HEAD)"
-    if g merge -q --no-edit -X "${strategy}" -m "sync: merge origin/${BRANCH} (${CONFLICT_WINNER} wins conflicts)" "${remote}" 2>"${DATA_DIR}/merge.err"; then
+    # Two histories with no common commit (a root commit made here before
+    # the remote was readable, or a remote re-created from scratch) merge
+    # like any other pair under the same conflict policy.
+    local unrelated=()
+    if ! g merge-base HEAD "${remote}" >/dev/null 2>&1; then
+        unrelated=(--allow-unrelated-histories)
+        log_warning "origin/${BRANCH} shares no history with the local branch; merging the two histories with ${CONFLICT_WINNER} winning conflicts."
+    fi
+    if g merge -q --no-edit "${unrelated[@]}" -X "${strategy}" -m "sync: merge origin/${BRANCH} (${CONFLICT_WINNER} wins conflicts)" "${remote}" 2>"${DATA_DIR}/merge.err"; then
         PULLED_FILES="$(g diff --name-only "${before}" HEAD | wc -l | tr -d ' ')"
         log_info "Merged origin/${BRANCH}: ${PULLED_FILES} file(s) written to the host."
         if [ "${LOG_LEVEL}" = "debug" ]; then g diff --name-status "${before}" HEAD | sed 's/^/  /'; fi
@@ -367,9 +382,11 @@ reload_core() {
 sync_once() {
     LAST_ERROR=""
     write_status "running"
-    setup_transport
-    ensure_repository
-    adopt_remote_if_first_run
+    # Under `sync_once || ...` errexit is off inside this function, so each
+    # preparatory step's failure is checked explicitly.
+    setup_transport || { write_status "error"; return 1; }
+    ensure_repository || { write_status "error"; return 1; }
+    adopt_remote_if_first_run || { write_status "error"; return 1; }
     commit_host_changes
     local rc=0
     merge_remote || rc=1

@@ -4,7 +4,7 @@ description: >-
   with a Forgejo (or any git) repository. Runs on the Home Assistant host, so
   no workstation, scheduled task, or inbound SSH is involved: host changes
   are committed and pushed, repository changes are pulled into /config.
-version: "2026.09.22.1"
+version: "2026.09.22.2"
 slug: "config_sync"
 init: false
 startup: services
