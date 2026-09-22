@@ -1,0 +1,8 @@
+#!/usr/bin/with-contenv bashio
+# Exit 0 is a deliberate stop; anything else is a crash that s6 restarts.
+EXIT_CODE="${1:-0}"
+if [ "${EXIT_CODE}" -eq 0 ] 2>/dev/null; then
+    bashio::log.info "Config Sync stopped cleanly."
+else
+    bashio::log.warning "Config Sync exited with code ${EXIT_CODE}; s6 will restart it."
+fi

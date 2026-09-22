@@ -1,0 +1,71 @@
+configuration:
+  remote_url:
+    name: Repository URL
+    description: >-
+      Any URL git accepts. For Forgejo's built-in SSH server use the form
+      ssh://git@forgejo.example:30143/Org/ha-config.git. An https URL needs
+      an access token below and, for a private CA, the CA certificate file.
+  branch:
+    name: Branch
+    description: The branch to synchronize with. Created on the first push if it does not exist.
+  interval_minutes:
+    name: Interval (minutes)
+    description: How often a sync cycle runs (commit host changes, pull, push).
+  conflict_winner:
+    name: Conflict winner
+    description: >-
+      Which side wins when the same lines changed on both sides between two
+      cycles. "remote" is the repository, where deliberate edits are made;
+      "host" is what Home Assistant wrote. Non-overlapping changes merge
+      either way and are never lost.
+  commit_author_name:
+    name: Commit author name
+    description: Author recorded on commits made from the host.
+  commit_author_email:
+    name: Commit author email
+    description: Email recorded on commits made from the host.
+  ssh_key_file:
+    name: SSH private key file
+    description: >-
+      File name of a private key placed in this app's config directory
+      (/addon_configs/<slug>/). Leave empty to let the app generate an
+      ed25519 key on first start; it logs the public key to add to the
+      repository's deploy keys with write access.
+  ssh_known_hosts_file:
+    name: SSH known_hosts file
+    description: >-
+      File name of a known_hosts file in this app's config directory that
+      pins the remote's host key. Leave empty to fetch and pin the key on
+      first contact (the fingerprint is logged; verify it).
+  https_token:
+    name: HTTPS access token
+    description: For an https repository URL only. A Forgejo access token with write access to the repository.
+  ca_certificate_file:
+    name: CA certificate file
+    description: >-
+      For an https repository URL signed by a private CA: file name of the
+      CA certificate (PEM) in this app's config directory.
+  secret_scan:
+    name: Secret scan
+    description: >-
+      Before committing, leave out any file that looks like it carries a
+      credential (private key block, or a password/token key with a literal
+      value) and name it in the log. Heuristic; the exclude list is the
+      real control.
+  reload_after_pull:
+    name: Reload after pull
+    description: >-
+      After a pull that changed files: do nothing, or call
+      homeassistant.reload_all so packages, automations, scripts and
+      templates pick the change up. YAML dashboards reload on their own on
+      next open; lovelace.yaml's dashboard list needs a restart.
+  exclude:
+    name: Excluded paths
+    description: >-
+      gitignore patterns relative to the configuration directory. An
+      excluded path is never committed and never written by a pull. The
+      defaults keep credentials, caches, databases, logs, media, and
+      HACS-managed trees out of the repository.
+  log_level:
+    name: Log level
+    description: debug lists every file each cycle touched.

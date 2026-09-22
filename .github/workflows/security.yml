@@ -1,0 +1,49 @@
+# Static and image security checks on every push, pull request, and weekly; see docs/security.md.
+name: Security
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  shell-security:
+    name: ShellCheck app scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check shell programs
+        run: |
+          shellcheck --shell=bash --severity=warning --exclude=SC1091,SC2016 config_sync/rootfs/usr/local/bin/config_sync.sh scripts/smoke_test.sh
+          shellcheck --shell=bash --severity=warning --exclude=SC1091,SC2034 config_sync/rootfs/etc/services.d/config_sync/run
+
+  app-image-security:
+    name: App image build and vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the app image
+        run: docker build --tag local/app-config-sync:${{ github.sha }} config_sync
+      - name: Scan installed OS packages
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: local/app-config-sync:${{ github.sha }}
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+          grype-version: v0.110.0
+      - name: Assert no network client beyond git and ssh is on the PATH
+        run: |
+          set -euo pipefail
+          for tool in nc wget telnet ftpget ftpput tftp; do
+            if docker run --rm --entrypoint sh local/app-config-sync:${{ github.sha }} -c "command -v $tool" >/dev/null 2>&1; then
+              echo "::error::$tool is present in the image"; exit 1
+            fi
+          done
+          echo "network client floor holds"

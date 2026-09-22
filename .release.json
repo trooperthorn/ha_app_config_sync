@@ -1,0 +1,21 @@
+{
+  "tag_prefix": "v",
+  "timezone": "America/Chicago",
+  "release_paths": [
+    "config_sync"
+  ],
+  "version_fields": [
+    {
+      "path": "config_sync/config.yaml",
+      "kind": "regex",
+      "pattern": "^version:\\s*\"([^\"]+)\"",
+      "template": "version: \"{version}\""
+    },
+    {
+      "path": "config_sync/rootfs/etc/services.d/config_sync/run",
+      "kind": "regex",
+      "pattern": "^APP_VERSION=\"([^\"]+)\"",
+      "template": "APP_VERSION=\"{version}\""
+    }
+  ]
+}

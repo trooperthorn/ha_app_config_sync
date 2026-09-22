@@ -1,0 +1,84 @@
+# AppArmor profile for the Config Sync app. A file named apparmor.txt beside
+# config.yaml is loaded by the Supervisor as the container's profile, named
+# after the slug ("config_sync"), and earns the documented +1 on the app
+# security rating. The base rules (boot chain with r as well as ix,
+# directory listings everywhere) are the ones the HA SOC Terminal profile
+# had to learn on a live Supervisor; see that repository's apparmor.txt.
+#
+# What this profile is FOR: git reads and writes the whole configuration
+# directory and its own object store, and ssh or https reaches one remote.
+# What it withholds: every capability, every raw or netlink socket, and
+# writes anywhere other than the configuration directory, /data, /tmp and
+# the runtime directories s6 owns. The app's own config directory
+# (/addon_config) is read-only to the engine even though the map is rw;
+# the map is rw only so the operator's files can be placed there through
+# the Supervisor's file tooling.
+#
+# Status: NOT verified against a live Supervisor as of 2026-09-22. The CI
+# smoke test runs the image with a plain docker run, which never attaches a
+# profile. If the app fails to start or git logs permission errors, look in
+# Settings > System > Logs > Host for "DENIED" lines naming config_sync.
+
+#include <tunables/global>
+
+profile config_sync flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  signal (send) set=(kill,term,int,hup,cont),
+  signal (receive),
+
+  # git to the remote over TCP, DNS over UDP. No raw, no packet, no netlink.
+  network inet tcp,
+  network inet6 tcp,
+  network inet udp,
+  network inet6 udp,
+  unix,
+
+  # Directory listings everywhere, read-only; contents governed below.
+  / r,
+  /**/ r,
+
+  # s6-overlay boot chain and the image's programs. Scripts need r as well
+  # as ix because the interpreter opens the file.
+  /init rix,
+  /bin/** rix,
+  /sbin/** rix,
+  /usr/bin/** rix,
+  /usr/sbin/** rix,
+  /usr/local/bin/** rix,
+  /usr/libexec/git-core/** rix,
+  /run/{s6,s6-rc*,service}/** rix,
+  /package/** rix,
+  /command/** rix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/{,**} rwk,
+  /usr/lib/bashio/** rix,
+  /usr/lib/** rm,
+  /lib/** rm,
+  /usr/share/** r,
+  /etc/** r,
+
+  # The work tree, the object store, and the operator's files.
+  /homeassistant/ rw,
+  /homeassistant/** rwkl,
+  /data/ rw,
+  /data/** rwkl,
+  /addon_config/ r,
+  /addon_config/** r,
+  /tmp/ rw,
+  /tmp/** rwk,
+
+  /dev/null rw,
+  /dev/zero r,
+  /dev/urandom r,
+  /dev/random r,
+  /dev/tty rw,
+  /dev/stdout w,
+  /dev/stderr w,
+  @{PROC}/ r,
+  @{PROC}/** r,
+  /sys/ r,
+  /sys/** r,
+}

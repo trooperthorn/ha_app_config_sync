@@ -1,0 +1,54 @@
+# App config and Dockerfile validation; apps are not distributed through HACS, so no hacs or hassfest job.
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  app-config:
+    name: App config well-formed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Validate YAML, the version lockstep, and option coverage
+        run: |
+          pip install pyyaml
+          python - <<'PY'
+          import yaml
+          for f in ['config_sync/config.yaml', 'repository.yaml', 'config_sync/translations/en.yaml']:
+              with open(f, encoding='utf-8') as fh:
+                  yaml.safe_load(fh)
+              print(f, 'OK')
+          cfg = yaml.safe_load(open('config_sync/config.yaml', encoding='utf-8'))
+          tr = yaml.safe_load(open('config_sync/translations/en.yaml', encoding='utf-8'))['configuration']
+          for key in cfg['options']:
+              assert key in cfg['schema'], f'{key} has no schema'
+              assert key in tr, f'{key} has no translation'
+          for key in cfg['schema']:
+              assert key in cfg['options'], f'{key} has a schema but no default'
+          assert cfg['slug'] == 'config_sync'
+          assert 'full_access' not in cfg and 'privileged' not in cfg and 'host_network' not in cfg
+          print('option coverage and privilege floor OK')
+          PY
+          python scripts/build_release_artifacts.py --validate-only
+
+  hadolint:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: config_sync/Dockerfile
+          failure-threshold: error

@@ -1,0 +1,52 @@
+#!/usr/bin/with-contenv bashio
+# Config Sync: reads the options once, then runs the sync engine on its
+# interval. The engine (config_sync.sh) is a plain bash program that takes
+# everything from the environment, so the smoke test can run it outside the
+# Supervisor with the same code path.
+set -euo pipefail
+
+# Keep in lockstep with config.yaml's `version:` on every release.
+APP_VERSION="2026.09.22.1"
+
+export SYNC_REMOTE_URL SYNC_BRANCH SYNC_INTERVAL_MINUTES SYNC_CONFLICT_WINNER
+export SYNC_AUTHOR_NAME SYNC_AUTHOR_EMAIL SYNC_SSH_KEY_FILE SYNC_KNOWN_HOSTS_FILE
+export SYNC_HTTPS_TOKEN SYNC_CA_FILE SYNC_SECRET_SCAN SYNC_RELOAD_AFTER_PULL
+export SYNC_EXCLUDE_FILE SYNC_LOG_LEVEL SYNC_WORK_TREE SYNC_DATA_DIR SYNC_ADDON_CONFIG_DIR
+export SYNC_APP_VERSION="${APP_VERSION}"
+
+SYNC_WORK_TREE="/homeassistant"
+SYNC_DATA_DIR="/data"
+SYNC_ADDON_CONFIG_DIR="/addon_config"
+
+SYNC_REMOTE_URL="$(bashio::config 'remote_url')"
+SYNC_BRANCH="$(bashio::config 'branch')"
+SYNC_INTERVAL_MINUTES="$(bashio::config 'interval_minutes')"
+SYNC_CONFLICT_WINNER="$(bashio::config 'conflict_winner')"
+SYNC_AUTHOR_NAME="$(bashio::config 'commit_author_name')"
+SYNC_AUTHOR_EMAIL="$(bashio::config 'commit_author_email')"
+SYNC_SSH_KEY_FILE="$(bashio::config 'ssh_key_file')"
+SYNC_KNOWN_HOSTS_FILE="$(bashio::config 'ssh_known_hosts_file')"
+SYNC_HTTPS_TOKEN="$(bashio::config 'https_token')"
+SYNC_CA_FILE="$(bashio::config 'ca_certificate_file')"
+SYNC_SECRET_SCAN="$(bashio::config 'secret_scan')"
+SYNC_RELOAD_AFTER_PULL="$(bashio::config 'reload_after_pull')"
+SYNC_LOG_LEVEL="$(bashio::config 'log_level')"
+
+# bashio::config returns "null" for an empty string option.
+for v in SYNC_REMOTE_URL SYNC_SSH_KEY_FILE SYNC_KNOWN_HOSTS_FILE SYNC_HTTPS_TOKEN SYNC_CA_FILE; do
+    [ "${!v}" = "null" ] && printf -v "$v" '%s' ""
+done
+
+# The exclude list, one pattern per line, in gitignore syntax.
+SYNC_EXCLUDE_FILE="${SYNC_DATA_DIR}/exclude"
+jq -r '(.exclude // []) | .[] | tostring' /data/options.json > "${SYNC_EXCLUDE_FILE}"
+
+if [ -z "${SYNC_REMOTE_URL}" ]; then
+    bashio::log.fatal "remote_url is empty. Set it to the repository to synchronize with (for example ssh://git@forgejo.example:30143/Org/ha-config.git) and restart the app."
+    # Stay up so the log is readable in the UI; nothing is synchronized.
+    exec sleep infinity
+fi
+
+bashio::log.info "Config Sync ${APP_VERSION}: ${SYNC_WORK_TREE} <-> ${SYNC_REMOTE_URL} (${SYNC_BRANCH}), every ${SYNC_INTERVAL_MINUTES} min, conflicts favour ${SYNC_CONFLICT_WINNER}."
+
+exec /usr/local/bin/config_sync.sh loop

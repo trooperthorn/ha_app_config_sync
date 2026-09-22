@@ -1,0 +1,9 @@
+#!/bin/sh
+# GIT_ASKPASS helper for HTTPS remotes: answers git's username prompt with
+# a fixed name and its password prompt with the token from the environment,
+# so the token is never written to a file. Forgejo accepts any username
+# with an access token as the password.
+case "$1" in
+    *sername*) printf '%s\n' "token" ;;
+    *) printf '%s\n' "${SYNC_HTTPS_TOKEN:-}" ;;
+esac

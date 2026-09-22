@@ -1,0 +1,37 @@
+# Shell lint, image build and the behavioural smoke test; release.yml calls it so the same checks gate every release.
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Shell syntax and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Shell syntax and ShellCheck
+        run: |
+          set -euo pipefail
+          for f in config_sync/rootfs/usr/local/bin/config_sync.sh config_sync/rootfs/etc/services.d/config_sync/run config_sync/rootfs/etc/services.d/config_sync/finish scripts/smoke_test.sh; do
+            bash -n "$f"
+          done
+          shellcheck --shell=bash --exclude=SC1091,SC2016 config_sync/rootfs/usr/local/bin/config_sync.sh scripts/smoke_test.sh
+          shellcheck --shell=bash --exclude=SC1091,SC2034 config_sync/rootfs/etc/services.d/config_sync/run config_sync/rootfs/etc/services.d/config_sync/finish
+          shellcheck --shell=sh config_sync/rootfs/usr/local/bin/config_sync_askpass
+
+  image-smoke-test:
+    name: App image builds and synchronizes both ways
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the app image
+        run: docker build --tag local/app-config-sync:${{ github.sha }} config_sync
+      - name: Run the smoke test
+        run: scripts/smoke_test.sh local/app-config-sync:${{ github.sha }}

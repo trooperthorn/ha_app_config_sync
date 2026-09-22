@@ -1,0 +1,172 @@
+name: "Config Sync (Forgejo)"
+description: >-
+  Two-way git synchronization of the Home Assistant configuration directory
+  with a Forgejo (or any git) repository. Runs on the Home Assistant host, so
+  no workstation, scheduled task, or inbound SSH is involved: host changes
+  are committed and pushed, repository changes are pulled into /config.
+version: "2026.09.22.1"
+slug: "config_sync"
+init: false
+startup: services
+# Experimental until a real installation has run a full cycle; see docs/decisions.md.
+stage: experimental
+url: "https://github.com/trooperthorn/ha_app_config_sync/"
+
+arch:
+  - aarch64
+  - amd64
+
+# No ingress, no ports, no host network. The only outbound connection is git
+# to the configured remote. homeassistant_api is used for exactly one call:
+# the optional reload of YAML configuration after a pull (reload_after_pull).
+ingress: false
+homeassistant_api: true
+
+# The configuration directory is the git work tree (writable, that is the
+# point). The app's own config directory holds operator-supplied files that
+# must not live in the repository or in the backup-included /data: an
+# optional SSH private key, an optional known_hosts, an optional CA
+# certificate for an HTTPS remote. Nothing else is mapped.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /homeassistant
+  - type: addon_config
+    read_only: false
+    path: /addon_config
+
+# /data holds the git object store (repo.git), the generated SSH key, and
+# status.json. The object store is a copy of what the remote already holds
+# and can be large; it is rebuilt from the remote on first start if missing.
+backup_exclude:
+  - "repo.git/**"
+
+options:
+  remote_url: ""
+  branch: "main"
+  interval_minutes: 10
+  conflict_winner: "remote"
+  commit_author_name: "Home Assistant"
+  commit_author_email: "config-sync@home-assistant.local"
+  ssh_key_file: ""
+  ssh_known_hosts_file: ""
+  https_token: ""
+  ca_certificate_file: ""
+  secret_scan: true
+  reload_after_pull: "none"
+  exclude:
+    - "secrets.yaml"
+    - "gcloud.json"
+    - "ssl/"
+    - ".storage/auth"
+    - ".storage/auth.session"
+    - ".storage/auth_module.totp"
+    - ".storage/auth_provider.homeassistant"
+    - ".storage/onboarding"
+    - ".storage/core.config_entries"
+    - ".storage/application_credentials"
+    - ".storage/cloud"
+    - ".storage/google_assistant"
+    - ".storage/hacs.*"
+    - ".storage/mobile_app"
+    - ".storage/http"
+    - ".storage/http.auth"
+    - ".storage/androidtv_*"
+    - ".storage/keymaster.locks"
+    - ".storage/alarmo.storage"
+    - ".storage/ha_soc.secrets"
+    - ".storage/unifi_data"
+    - ".storage/unifiprotect"
+    - ".storage/homekit_controller-entity-map"
+    - ".storage/*.webhook"
+    - ".storage/webhook*"
+    - ".storage/.blueiris"
+    - ".cloud/"
+    - "node-red/flows_cred.json"
+    - "node-red/.sessions.json"
+    - "node-red/settings.js"
+    - "node-red/.config.users.json"
+    - "node-red/.config.users.json.backup"
+    - "esphome/secrets.yaml"
+    - "esphome/archive/"
+    - "esphome/.esphome/"
+    - "esphome/.device-builder-peer-link-key.bin"
+    - "*.pem"
+    - "*.key"
+    - "*_key"
+    - "*_key.pub"
+    - "*-key.bin"
+    - ".storage/tmp*"
+    - ".storage/core.restore_state"
+    - ".storage/trace.saved_traces"
+    - ".storage/*.migration_backup"
+    - ".storage/spook.timed_states"
+    - ".storage/core.analytics"
+    - ".storage/core.uuid"
+    - ".storage/backup"
+    - ".storage/image"
+    - ".storage/map"
+    - ".storage/bluetooth.*"
+    - ".storage/better_thermostat_*_state"
+    - ".storage/ha_soc_audit"
+    - ".storage/ha_soc.storage"
+    - ".storage/browser_mod.storage"
+    - ".storage/adjustable_bed_discovery_log"
+    - ".storage/powercalc_profiles"
+    - ".storage/local_calendar.*"
+    - ".ha_run.lock"
+    - "node-red/node_modules/"
+    - "node-red/.config.nodes.json.backup"
+    - "esphome/.device-builder.json.lock"
+    - "*.db"
+    - "*.db-*"
+    - "*.log"
+    - "*.log.*"
+    - "*.log.fault"
+    - "*.bak-*"
+    - "deps/"
+    - "tts/"
+    - "image/"
+    - "media/"
+    - "backups/"
+    - "__pycache__/"
+    - ".cache/"
+    - "custom_components/"
+    - "www/community/"
+    - ".git/"
+  log_level: "info"
+
+schema:
+  # Any URL git accepts. SSH form for Forgejo's built-in SSH server:
+  # ssh://git@forgejo.example:30143/Org/repo.git. HTTPS form needs
+  # https_token and, for a private CA, ca_certificate_file.
+  remote_url: str
+  branch: str
+  interval_minutes: int(1,1440)
+  # Which side wins when the same lines changed on both sides between two
+  # cycles. "remote" is the repository, where deliberate edits are made;
+  # "host" is what Home Assistant wrote. Non-overlapping changes merge either way.
+  conflict_winner: list(remote|host)
+  commit_author_name: str
+  commit_author_email: str
+  # File names under this app's own config directory (/addon_configs/<slug>/).
+  # Empty ssh_key_file: the app generates an ed25519 key on first start and
+  # logs the public key for the repository's deploy keys.
+  ssh_key_file: str
+  # Empty: the remote's host key is fetched and pinned on first contact and
+  # its fingerprint is logged (trust on first use). A file pins it in advance.
+  ssh_known_hosts_file: str
+  https_token: password
+  ca_certificate_file: str
+  # Files that look like they carry a credential are left out of the commit
+  # and named in the log, instead of being pushed.
+  secret_scan: bool
+  # After a pull that changed files: none, or call homeassistant.reload_all
+  # (packages, automations, scripts, templates; not lovelace.yaml's
+  # dashboard list, which needs a restart).
+  reload_after_pull: list(none|reload_all)
+  # gitignore syntax, relative to the configuration directory. Applies to
+  # both directions: an excluded path is never committed and never written.
+  exclude:
+    - str
+  log_level: list(debug|info|warning|error)
