@@ -9,9 +9,31 @@
    (verify it against the server).
 3. Restart the app. The first cycle imports and pushes.
 
+## Registering the deploy key
+
+The key goes under the repository's own Settings > Deploy keys, with
+"Enable write access" ticked. Forgejo also has a user-level SSH keys page
+under the avatar menu; a key placed there authenticates as that user with
+access to every repository they can reach, which is more than this app
+needs.
+
+## Getting a new release onto the host
+
+The Supervisor re-reads app repositories on its own schedule, so a fresh
+release is not offered right away. On the host, `ha store reload` (or
+"Check for updates" in the App store) makes it appear; then update as
+usual. The app restarts on update and runs a cycle immediately.
+
+## Forcing a cycle
+
+Restart the app. The s6 run script logs "exited with code 256" for the
+stop; that is the restart, not a failure.
+
 ## Reading the state
 
-`/data/status.json` in the app's data directory:
+`/data/status.json` in the app's data directory (visible through a
+terminal app that maps app data, or the Supervisor's file tooling; the
+Advanced SSH & Web Terminal add-on does not see app data directories):
 
 ```json
 {"state": "ok", "time": "...", "head": "abc1234", "remote": "...", "branch": "main",

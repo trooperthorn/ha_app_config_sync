@@ -113,3 +113,25 @@ three live failures (boot chain with `r` and `ix`, directory listings
 everywhere, no capabilities). Writes are limited to `/homeassistant`,
 `/data`, `/tmp` and s6's runtime directories. It has not been loaded on a
 live Supervisor yet; the CI smoke test cannot attach a profile.
+
+## 2026-09-22: first-run fetch failures stop the cycle; unrelated histories merge
+
+The first live cycle ran before the deploy key existed in Forgejo. The
+first-run check only distinguished "fetch succeeded" from "fetch failed"
+and read the failure as an empty remote, so it made a root commit. With an
+empty remote that was harmless. With a remote that had history it would
+have produced two root commits and a merge that fails every cycle. Now
+only git's "couldn't find remote ref" takes the first-commit path; any
+other fetch failure ends the cycle with the error and nothing is
+committed until the remote is readable. As a second line of defence a
+merge between histories with no common commit proceeds with
+`--allow-unrelated-histories` under the conflict policy and logs a
+warning. Both are in the smoke test (scenarios 9 and 10). Shipped as
+2026.09.22.2.
+
+## 2026-09-22: the AppArmor profile and the maps are verified live
+
+The 2026.09.22.1 profile loaded and ran on a live Supervisor without a
+single denial through key generation, host-key pinning, a 190-file
+import, fetch, merge and push. The "unverified" markers in earlier
+entries are superseded by this one; the profile is unchanged.
