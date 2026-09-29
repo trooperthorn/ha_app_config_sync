@@ -135,3 +135,19 @@ The 2026.09.22.1 profile loaded and ran on a live Supervisor without a
 single denial through key generation, host-key pinning, a 190-file
 import, fetch, merge and push. The "unverified" markers in earlier
 entries are superseded by this one; the profile is unchanged.
+
+## 2026-09-29: an invalid git directory is moved aside and rebuilt
+
+After the owner moved Home Assistant to new hardware, `/data/repo.git`
+existed but git did not recognise it as a repository, and every cycle
+failed with "first run: could not read origin/main: fatal: not a git
+repository". Why the directory came back that way is unverified (the
+app data was restored as part of the migration). `ensure_repository`
+created the git directory only when the path was missing, so the app
+could not recover without a reinstall, which would also have discarded
+the deploy key. Now a directory at that path that `git rev-parse` rejects
+is renamed to `repo.git.invalid-<UTC time>` and a fresh git directory is
+created. It is renamed rather than deleted so its contents stay available
+for inspection. The existing first-run logic then adopts the remote's
+history and commits the host's files on top, which is the same host-wins
+import as a first install. Smoke test scenario 11. Shipped as 2026.09.29.1.

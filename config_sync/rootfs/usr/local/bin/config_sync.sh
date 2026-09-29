@@ -168,6 +168,17 @@ ensure_repository() {
         log_error "work tree ${WORK_TREE} does not exist."
         return 1
     fi
+    # A directory that is not a repository (seen after a host migration: the
+    # path came back but git no longer recognised it) would otherwise fail
+    # every cycle with "not a git repository", because the directory's
+    # existence alone skips the init below. Move it aside rather than delete
+    # it, then start over: the first-run path adopts the remote's history and
+    # commits the host's files on top, so nothing on the host is lost.
+    if [ -d "${GIT_DIR_PATH}" ] && ! git --git-dir="${GIT_DIR_PATH}" rev-parse --git-dir >/dev/null 2>&1; then
+        local aside; aside="${GIT_DIR_PATH}.invalid-$(date -u '+%Y%m%dT%H%M%SZ')"
+        log_warning "${GIT_DIR_PATH} is not a git repository; moving it to ${aside} and starting over."
+        mv "${GIT_DIR_PATH}" "${aside}"
+    fi
     if [ ! -d "${GIT_DIR_PATH}" ]; then
         log_info "Creating the git directory at ${GIT_DIR_PATH} for work tree ${WORK_TREE}."
         git init -q --bare "${GIT_DIR_PATH}"
