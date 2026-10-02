@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026.09.29.1
+
+After a host migration `/data/repo.git` came back as a directory git did
+not recognise, and every cycle failed with "first run: could not read
+origin/main: fatal: not a git repository". The engine only created the
+git directory when the path was missing, so it never recovered. Now a git
+directory that is not a repository is moved aside to
+`repo.git.invalid-<UTC time>` (kept, not deleted) and rebuilt; the
+first-run path then adopts the remote's history and commits the host's
+files on top. Smoke test scenario 11 covers it.
+
 ## 2026.09.22.2
 
 First live run showed the first-run check treating an authentication

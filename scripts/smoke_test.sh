@@ -10,7 +10,10 @@
 #   5. a secret-looking file is left out of the commit;
 #   6. a same-line conflict resolves to conflict_winner;
 #   7. the repository's rename of a file removes the old name on the host;
-#   8. no .git directory appears in the configuration directory.
+#   8. no .git directory appears in the configuration directory;
+#   9. a first run adopts a remote that already has history;
+#  10. two unrelated histories merge under the conflict policy;
+#  11. a git directory that is not a repository is moved aside and rebuilt.
 #
 #   scripts/smoke_test.sh <image-tag>
 set -euo pipefail
@@ -183,5 +186,30 @@ grep -q 'name: Third' "${HOST3}/configuration.yaml" || fail "host did not win th
 git -C "${CLONE3}" pull -q origin main
 grep -q 'name: Third' "${CLONE3}/configuration.yaml" || fail "unrelated-history merge was not pushed"
 ok "unrelated histories"
+
+echo "== 11. a git directory that is not a repository is moved aside and rebuilt"
+# After a host migration /data/repo.git came back as a directory git did
+# not recognise, and every cycle failed with "not a git repository".
+HOST4="${WORK}/host4"; DATA4="${WORK}/data4"; REMOTE4="${WORK}/remote4.git"; CLONE4="${WORK}/clone4"
+mkdir -p "${HOST4}" "${DATA4}/repo.git"; cp "${DATA}/exclude" "${DATA4}/exclude"
+printf 'leftover\n' > "${DATA4}/repo.git/stray"
+git init -q --bare -b main "${REMOTE4}"
+git clone -q "${REMOTE4}" "${CLONE4}" 2>/dev/null
+git -C "${CLONE4}" config user.name tester; git -C "${CLONE4}" config user.email tester@example.invalid
+printf 'homeassistant:\n  name: Before\n' > "${CLONE4}/configuration.yaml"
+git -C "${CLONE4}" add -A && git -C "${CLONE4}" commit -q -m "pushed before the migration" && git -C "${CLONE4}" push -q origin main
+printf 'homeassistant:\n  name: Migrated\n' > "${HOST4}/configuration.yaml"
+docker run --rm --user "$(id -u):$(id -g)" \
+    -v "${HOST4}:/homeassistant" -v "${DATA4}:/data" -v "${ADDON_CONFIG}:/addon_config" -v "${REMOTE4}:/remote.git" \
+    -e SYNC_REMOTE_URL=/remote.git -e SYNC_BRANCH=main -e SYNC_LOG_LEVEL=debug -e SYNC_EXCLUDE_FILE=/data/exclude \
+    --entrypoint /usr/local/bin/config_sync.sh "${IMAGE}" once 2>&1 | tee "${WORK}/step11.log" | sed 's/^/    /'
+grep -q "is not a git repository; moving it" "${WORK}/step11.log" || fail "the invalid git directory was not detected"
+compgen -G "${DATA4}/repo.git.invalid-*/stray" >/dev/null || fail "the invalid git directory was not kept aside"
+git --git-dir="${DATA4}/repo.git" rev-parse --git-dir >/dev/null 2>&1 || fail "the git directory was not rebuilt"
+grep -q "adopting the history" "${WORK}/step11.log" || fail "the rebuilt repository did not adopt the remote history"
+git -C "${CLONE4}" pull -q origin main
+grep -q 'name: Migrated' "${CLONE4}/configuration.yaml" || fail "the host's files were not pushed after the rebuild"
+[ "$(git -C "${CLONE4}" rev-list --count main)" -ge 2 ] || fail "remote history was replaced instead of extended"
+ok "invalid git directory rebuilt, remote history kept, host pushed"
 
 echo "== all smoke checks passed"
