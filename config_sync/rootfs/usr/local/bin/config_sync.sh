@@ -216,6 +216,9 @@ ensure_repository() {
     { grep -Ev '^[[:space:]]*(#|$)' "${EXCLUDE_FILE}" 2>/dev/null || true; echo ".git/"; } > "${GIT_DIR_PATH}/info/exclude"
     g config core.sparseCheckout true
     g config core.sparseCheckoutCone false
+    # Without this, git 2.37 and later clear skip-worktree on any such file
+    # that exists on disk, which would undo protect_tracked_excluded.
+    g config sparse.expectFilesOutsideOfPatterns true
     {
         echo "/*"
         while IFS= read -r pattern; do
@@ -275,6 +278,33 @@ scan_staged_for_secrets() {
     [ "${hits}" -eq 0 ] || log_warning "secret_scan left ${hits} file(s) uncommitted."
 }
 
+# ---------------------------------------------------------------- tracked and excluded
+# A path that is tracked and also matches exclude is not protected by the
+# sparse checkout alone. If it is not marked skip-worktree, the next command
+# that rewrites the index from the work tree (a merge, `reset --merge`,
+# `read-tree -u`) applies the sparse rules and deletes the file from disk.
+# That happens when the owner excludes a path the host already committed,
+# and when the repository adds a path the host already has (scenario 4).
+# Marking every such path skip-worktree before anything else runs keeps the
+# host's file untouched: never committed, never overwritten, never deleted.
+# The repository's copy, if any, stays in the repository; when the
+# repository deletes it, the merge drops the index entry and the host's
+# file stays where it is.
+protect_tracked_excluded() {
+    g rev-parse --verify --quiet HEAD >/dev/null || return 0
+    local list="${DATA_DIR}/protect.lst" entry n=0
+    : > "${list}"
+    # -t tags each tracked path: "H" for a normal entry, "S" for skip-worktree.
+    while IFS= read -r -d '' entry; do
+        case "${entry}" in
+            "H "*) printf '%s\0' "${entry#H }" >> "${list}"; n=$((n + 1)) ;;
+        esac
+    done < <(g ls-files -z -t -c -i --exclude-from="${GIT_DIR_PATH}/info/exclude" 2>/dev/null)
+    [ "${n}" -gt 0 ] || return 0
+    g update-index -z --skip-worktree --stdin < "${list}"
+    log_info "Protected ${n} tracked file(s) that match exclude; the host's copies are no longer committed, overwritten or deleted."
+}
+
 # ---------------------------------------------------------------- the cycle
 commit_host_changes() {
     g add -A -- . 2>/dev/null
@@ -291,6 +321,26 @@ commit_host_changes() {
     local n; n="$(g diff --cached --name-only | wc -l | tr -d ' ')"
     g commit -q -m "host: $(date -u '+%Y-%m-%dT%H:%M:%SZ') (${n} files)"
     log_info "Committed ${n} changed file(s) from the host."
+}
+
+# A merge that applies the repository's deletion of a tracked path removes
+# the file from disk, skip-worktree or not. For a path that matches exclude
+# the host's file must stay, so the deletion is taken here first: the path is
+# untracked in a local commit, both sides then agree it is gone, and the
+# merge leaves the file alone.
+untrack_excluded_deleted_by_remote() {
+    local remote="$1" list="${DATA_DIR}/untrack.lst" path n=0
+    : > "${list}"
+    while IFS= read -r -d '' path; do
+        if g ls-files -c -i --exclude-from="${GIT_DIR_PATH}/info/exclude" -- ":(literal)${path}" 2>/dev/null | grep -q .; then
+            printf '%s\0' "${path}" >> "${list}"
+            n=$((n + 1))
+        fi
+    done < <(g diff -z --name-only --no-renames --diff-filter=D HEAD "${remote}" 2>/dev/null)
+    [ "${n}" -gt 0 ] || return 0
+    g --literal-pathspecs rm -q --cached --sparse --pathspec-from-file="${list}" --pathspec-file-nul
+    g commit -q -m "host: untrack ${n} excluded file(s) that origin/${BRANCH} deleted"
+    log_info "origin/${BRANCH} deleted ${n} file(s) that match exclude; untracked them here first so the host's copies stay."
 }
 
 merge_remote() {
@@ -319,6 +369,7 @@ merge_remote() {
         log_debug "remote has nothing new"
         return 0
     fi
+    untrack_excluded_deleted_by_remote "${remote}"
     local strategy
     case "${CONFLICT_WINNER}" in
         host) strategy="ours" ;;
@@ -342,7 +393,12 @@ merge_remote() {
         # conflict (file vs directory, both added a binary). Back out and say so.
         LAST_ERROR="merge of origin/${BRANCH} could not be completed automatically: $(tr '\n' ' ' < "${DATA_DIR}/merge.err")"
         log_error "${LAST_ERROR}"
-        g merge --abort 2>/dev/null || g reset -q --merge 2>/dev/null || true
+        # Abort only a merge that started. A refused merge changed nothing,
+        # and a `reset --merge` here would apply the sparse checkout and
+        # remove tracked files that match exclude from the host.
+        if g rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+            g merge --abort 2>/dev/null || true
+        fi
         return 1
     fi
 }
@@ -398,6 +454,7 @@ sync_once() {
     setup_transport || { write_status "error"; return 1; }
     ensure_repository || { write_status "error"; return 1; }
     adopt_remote_if_first_run || { write_status "error"; return 1; }
+    protect_tracked_excluded
     commit_host_changes
     local rc=0
     merge_remote || rc=1

@@ -151,3 +151,43 @@ created. It is renamed rather than deleted so its contents stay available
 for inspection. The existing first-run logic then adopts the remote's
 history and commits the host's files on top, which is the same host-wins
 import as a first install. Smoke test scenario 11. Shipped as 2026.09.29.1.
+
+## 2026-10-10: tracked paths that are later excluded stay on the host
+
+The sparse checkout built from `exclude` protects a path only once git has
+marked it skip-worktree, and git marks it only when it rewrites the index
+from the work tree. A path the repository already tracked and the owner
+then excluded had no mark. On the live install on 2026-10-11 (UTC) the
+owner excluded `ha_soc/crash-*/`, `ha_soc/heartbeat.json` and
+`ha_soc/last_stop.json`, all tracked, and a workstation commit untracked
+them. The next merge was refused because the repository deleted
+`heartbeat.json` while the host had changed it. The failure handler ran
+`git merge --abort || git reset --merge`; with no merge in progress the
+reset ran, applied the new rules, and deleted the 120 crash-dump files
+from `/config`. They were recovered from the repository's history.
+
+Three changes, all in `config_sync.sh`:
+
+- `protect_tracked_excluded` marks every tracked file that matches exclude
+  skip-worktree at the start of each cycle, so no later command writes or
+  removes it and `git add -A` no longer stages it. This covers both a path
+  the owner excludes after the host committed it and a path the repository
+  adds that the host also has.
+- Skip-worktree does not stop a merge from applying a deletion: git
+  unlinks the file anyway. `untrack_excluded_deleted_by_remote` therefore
+  takes such deletions first, as a local `git rm --cached --sparse` commit,
+  so both sides agree the path is gone and the merge leaves the file alone.
+  Excluded paths the repository still has are not untracked, so the
+  repository's copy stays (scenario 4).
+- The merge failure path aborts only when `MERGE_HEAD` exists. A refused
+  merge changes nothing, so there is nothing to reset.
+
+`sparse.expectFilesOutsideOfPatterns` is set because git 2.37 and later
+clear skip-worktree on files that exist on disk, which would undo the
+first change. An alternative considered and rejected: untracking every
+tracked excluded path on the host. It cannot tell a host-committed path
+from the repository's own copy of an excluded path, and would delete the
+latter from the repository (it also fails, since `git rm` refuses paths
+outside the sparse checkout without `--sparse`). Smoke test scenario 12
+replays the live sequence; it fails on 2026.09.29.1 and passes now.
+Shipped as 2026.10.10.1.
