@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026.10.10.1
+
+Excluding a path the repository already tracked could delete it from the
+host. On a live install, `ha_soc/crash-*/` and `ha_soc/heartbeat.json` were
+added to `exclude` while tracked, and a workstation commit untracked them.
+The next merge was refused (the heartbeat had changed on the host and the
+repository deleted it), and the failure path's `git reset --merge` applied
+the new sparse checkout and removed the tracked crash dumps from disk.
+
+Now every cycle marks tracked files that match `exclude` skip-worktree
+before anything else runs, takes the repository's deletion of such a file
+as a local untrack before merging (so the merge cannot unlink it), aborts
+only a merge that actually started, and sets
+`sparse.expectFilesOutsideOfPatterns` so git keeps those marks. Excluded
+paths the repository still has keep their repository copy, as before.
+Smoke test scenario 12 replays the live sequence and fails on 2026.09.29.1.
+
 ## 2026.09.29.1
 
 After a host migration `/data/repo.git` came back as a directory git did

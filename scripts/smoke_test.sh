@@ -13,7 +13,9 @@
 #   8. no .git directory appears in the configuration directory;
 #   9. a first run adopts a remote that already has history;
 #  10. two unrelated histories merge under the conflict policy;
-#  11. a git directory that is not a repository is moved aside and rebuilt.
+#  11. a git directory that is not a repository is moved aside and rebuilt;
+#  12. a tracked path that is then excluded stays on the host, also when
+#      the repository deletes it while the host is changing it.
 #
 #   scripts/smoke_test.sh <image-tag>
 set -euo pipefail
@@ -211,5 +213,57 @@ git -C "${CLONE4}" pull -q origin main
 grep -q 'name: Migrated' "${CLONE4}/configuration.yaml" || fail "the host's files were not pushed after the rebuild"
 [ "$(git -C "${CLONE4}" rev-list --count main)" -ge 2 ] || fail "remote history was replaced instead of extended"
 ok "invalid git directory rebuilt, remote history kept, host pushed"
+
+echo "== 12. a tracked path that is then excluded stays on the host"
+# Live on 2026-10-11: ha_soc/ crash dumps and heartbeat.json were tracked,
+# then added to exclude, and a workstation commit untracked them. The next
+# cycle's merge was refused (heartbeat.json changed on the host and the
+# repository deleted it), and the failure path's `reset --merge` applied the
+# new sparse checkout and deleted the tracked crash dumps from the host.
+HOST5="${WORK}/host5"; DATA5="${WORK}/data5"; REMOTE5="${WORK}/remote5.git"; CLONE5="${WORK}/clone5"
+mkdir -p "${HOST5}/ha_soc/crash-1" "${DATA5}"; cp "${DATA}/exclude" "${DATA5}/exclude"
+git init -q --bare -b main "${REMOTE5}"
+printf 'homeassistant:\n  name: Five\n' > "${HOST5}/configuration.yaml"
+printf 'journal\n' > "${HOST5}/ha_soc/crash-1/core.txt"
+printf '{"ts": 1}\n' > "${HOST5}/ha_soc/heartbeat.json"
+printf '{"reason": "clean"}\n' > "${HOST5}/ha_soc/last_stop.json"
+sync5() {
+    docker run --rm --user "$(id -u):$(id -g)" \
+        -v "${HOST5}:/homeassistant" -v "${DATA5}:/data" -v "${ADDON_CONFIG}:/addon_config" -v "${REMOTE5}:/remote.git" \
+        -e SYNC_REMOTE_URL=/remote.git -e SYNC_BRANCH=main -e SYNC_LOG_LEVEL=debug -e SYNC_EXCLUDE_FILE=/data/exclude \
+        --entrypoint /usr/local/bin/config_sync.sh "${IMAGE}" once 2>&1 | tee -a "${WORK}/step12.log" | sed 's/^/    /'
+}
+sync5
+git clone -q "${REMOTE5}" "${CLONE5}" 2>/dev/null
+git -C "${CLONE5}" config user.name tester; git -C "${CLONE5}" config user.email tester@example.invalid
+[ -f "${CLONE5}/ha_soc/crash-1/core.txt" ] || fail "setup: the crash dump was not pushed"
+# The owner adds the paths to exclude. Before the host's next cycle a
+# workstation untracks two of them, and the host keeps writing the heartbeat.
+printf '%s\n' 'ha_soc/crash-*/' 'ha_soc/heartbeat.json' 'ha_soc/last_stop.json' >> "${DATA5}/exclude"
+git -C "${CLONE5}" rm -r -q --cached ha_soc/crash-1 ha_soc/heartbeat.json
+git -C "${CLONE5}" commit -q -m "untrack crash dumps"
+git -C "${CLONE5}" push -q origin main
+printf '{"ts": 2}\n' > "${HOST5}/ha_soc/heartbeat.json"
+sync5
+! grep -q "could not be completed automatically" "${WORK}/step12.log" || fail "the merge was refused"
+[ -f "${HOST5}/ha_soc/crash-1/core.txt" ] || fail "a newly excluded crash dump was deleted from the host"
+[ -f "${HOST5}/ha_soc/heartbeat.json" ] || fail "the newly excluded heartbeat was deleted from the host"
+[ -f "${HOST5}/ha_soc/last_stop.json" ] || fail "a newly excluded file the repository still tracks was deleted"
+grep -q "Protected 3 tracked file(s)" "${WORK}/step12.log" || fail "the tracked excluded paths were not protected"
+git -C "${CLONE5}" pull -q origin main
+# The workstation's untrack reached the repository; the path only the host
+# excluded keeps its repository copy, as for any excluded path (scenario 4).
+[ "$(git -C "${CLONE5}" ls-files ha_soc)" = "ha_soc/last_stop.json" ] || fail "unexpected tracked ha_soc paths: $(git -C "${CLONE5}" ls-files ha_soc | tr '\n' ' ')"
+# Later host writes to excluded paths are not committed, and a failed
+# merge would no longer take files with it.
+printf '{"ts": 3}\n' > "${HOST5}/ha_soc/heartbeat.json"
+printf '{"reason": "crash"}\n' > "${HOST5}/ha_soc/last_stop.json"
+before="$(git -C "${CLONE5}" rev-parse HEAD)"
+sync5
+git -C "${CLONE5}" pull -q origin main
+[ "$(git -C "${CLONE5}" rev-parse HEAD)" = "${before}" ] || fail "a write to an excluded path made a commit"
+grep -q 'clean' "${CLONE5}/ha_soc/last_stop.json" || fail "the host's excluded copy was pushed over the repository's"
+[ -f "${HOST5}/ha_soc/crash-1/core.txt" ] || fail "the crash dump did not survive a later cycle"
+ok "tracked paths that are then excluded stay on the host"
 
 echo "== all smoke checks passed"

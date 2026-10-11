@@ -67,6 +67,13 @@ HACS). Add to it freely; remove from it only after checking what the path
 contains. Excluded paths are never written by a pull either, so an excluded
 path that exists in the repository stays as it is on the host.
 
+Excluding a path the repository already tracks is safe from 2026.10.10.1:
+the host's file stays where it is and is no longer committed. The
+repository keeps its last copy until someone removes it there; when that
+deletion arrives, the host's file still stays. Version 2026.09.29.1 and
+earlier could delete such a file from the host when a later merge failed,
+so update before excluding anything that is already in the repository.
+
 ## First run against a repository that already has content
 
 The host's files win. The remote history is adopted and the host's current
